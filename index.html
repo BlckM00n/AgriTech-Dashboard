@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="es" class="dark h-full bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard IoT Agrícola - Arduino UNO R4 WiFi</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        agri: {
+                            50: '#f0fdf4',
+                            400: '#4ade80',
+                            500: '#22c55e',
+                            600: '#16a34a',
+                            900: '#14532d',
+                            glow: '#00ff88',
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['Courier Prime', 'Consolas', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- MQTT.js for WebSockets browser connection -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        /* Digital LCD display effect */
+        .lcd-display {
+            background-color: #0b2210;
+            color: #39ff14;
+            font-family: 'Courier New', Courier, monospace;
+            text-shadow: 0 0 5px rgba(57, 255, 20, 0.75);
+            box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.8);
+        }
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+        }
+    </style>
+</head>
+<body class="h-full font-sans antialiased bg-slate-950 text-slate-100 flex flex-col">
+
+    <!-- Top Alert Banner -->
+    <div id="alertBanner" class="hidden bg-rose-600/90 text-white px-4 py-2 text-sm font-semibold flex items-center justify-between shadow-lg animate-pulse z-50">
+        <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-triangle-exclamation text-lg"></i>
+            <span id="alertMessage">¡ALERTA CRÍTICA: Parámetros fuera de rango de seguridad!</span>
+        </div>
+        <button onclick="dismissAlert()" class="text-white hover:text-slate-200 text-xs uppercase px-2 py-1 bg-black/20 rounded">
+            Descartar
+        </button>
+    </div>
+
+    <!-- Main Navigation Header -->
+    <header class="bg-slate-900 border-b border-slate-800 px-4 py-3 sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+
+            <!-- Brand -->
+            <div class="flex items-center space-x-3">
+                <div class="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400">
+                    <i class="fa-solid fa-leaf text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight text-emerald-400 flex items-center gap-2">
+                        AgriTech <span class="text-xs bg-emerald-900/50 text-emerald-300 px-2 py-0.5 rounded border border-emerald-700/50">R4 WiFi</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">Dashboard de Monitoreo Hidropónico / Agrícola</p>
+                </div>
+            </div>
+
+            <!-- MQTT Status & Control Bar -->
+            <div class="flex flex-wrap items-center gap-3">
+
+                <!-- Broker Selector -->
+                <div class="flex items-center bg-slate-950 border border-slate-800 rounded-lg px-2 py-1">
+                    <label class="text-xs text-slate-400 mr-2 flex items-center gap-1">
+                        <i class="fa-solid fa-server"></i> Broker:
+                    </label>
+                    <select id="brokerSelect" onchange="changeBroker()" class="bg-transparent text-xs text-slate-200 font-mono focus:outline-none cursor-pointer">
+                        <option value="wss://broker.hivemq.com:8884/mqtt" selected>HiveMQ (WSS:8884)</option>
+                        <option value="wss://test.mosquitto.org:8081/mqtt">Mosquitto (WSS:8081)</option>
+                        <option value="wss://broker.emqx.io:8084/mqtt">EMQX (WSS:8084)</option>
+                    </select>
+                </div>
+
+                <!-- Live Connection Badge -->
+                <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold">
+                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    <span id="statusText">Conectando...</span>
+                </div>
+
+                <!-- Simulation Mode Toggle -->
+                <button id="simToggleBtn" onclick="toggleSimulation()" class="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs px-3 py-1.5 rounded-lg transition-colors">
+                    <i class="fa-solid fa-flask text-emerald-400"></i>
+                    <span>Modo Prueba: <strong id="simStatus" class="text-rose-400">OFF</strong></span>
+                </button>
+
+                <!-- Arduino Code Button -->
+                <button onclick="openArduinoModal()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium shadow-md transition-all">
+                    <i class="fa-solid fa-microchip"></i>
+                    <span>Código Arduino</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Content Grid -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+
+        <!-- Top Overview Row: Hardware Emulation & Quick Stats -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- LCD 16x2 Emulation -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-tv text-emerald-400"></i> Pantalla LCD I2C (16x2)
+                    </span>
+                    <span class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded font-mono">0x27</span>
+                </div>
+                <div class="lcd-display rounded-lg p-3 font-mono text-sm leading-snug border border-emerald-900/50 h-24 flex flex-col justify-center">
+                    <div id="lcdLine1" class="whitespace-pre">pH:--.- H:--%   </div>
+                    <div id="lcdLine2" class="whitespace-pre">Estado: ESPERANDO</div>
+                </div>
+                <div class="mt-3 flex items-center justify-between text-xs text-slate-400">
+                    <span>Tópico MQTT: <code class="text-emerald-400 font-mono">duoc/siy6122/fertirriego/#</code></span>
+                    <span id="lastMsgTime">Sin mensajes</span>
+                </div>
+            </div>
+
+            <!-- Quick Summary Panel -->
+            <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-xl">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-shield-heart text-emerald-400"></i> Diagnóstico General del Sistema
+                    </span>
+                    <span id="healthBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold">
+                        ÓPTIMO
+                    </span>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 my-2">
+                    <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                        <div class="text-xs text-slate-400">Balance Nutrientes</div>
+                        <div id="summaryNutrient" class="text-sm font-bold text-slate-200 mt-1">Normal</div>
+                    </div>
+                    <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                        <div class="text-xs text-slate-400">Hidratación Suelo</div>
+                        <div id="summaryMoisture" class="text-sm font-bold text-slate-200 mt-1">Adecuada</div>
+                    </div>
+                    <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                        <div class="text-xs text-slate-400">Reserva de Agua</div>
+                        <div id="summaryWater" class="text-sm font-bold text-slate-200 mt-1">Suficiente</div>
+                    </div>
+                    <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-800">
+                        <div class="text-xs text-slate-400">Temperatura Ef.</div>
+                        <div id="summaryTemp" class="text-sm font-bold text-slate-200 mt-1">Ideal</div>
+                    </div>
+                </div>
+                <div class="text-xs text-slate-400 flex items-center justify-between">
+                    <span>Recepción de datos: <strong id="packetsReceived" class="text-slate-200 font-mono">0</strong> paquetes</span>
+                    <span>Broker: <span id="currentBrokerName" class="text-slate-300 font-mono">broker.hivemq.com</span></span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Metric Gauges Cards Grid -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+
+            <!-- Gauge 1: pH -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-lg hover:border-slate-700 transition-all">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-400 uppercase">Potencial Hidrógeno</span>
+                    <i class="fa-solid fa-flask-vial text-purple-400"></i>
+                </div>
+                <div class="my-3 text-center">
+                    <div class="text-3xl font-extrabold text-slate-100 font-mono" id="valPH">--</div>
+                    <span class="text-xs font-medium text-slate-400">pH (0 - 14)</span>
+                </div>
+                <div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 mb-2 overflow-hidden">
+                        <div id="barPH" class="bg-purple-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-slate-500">Rango (5.5 - 7.5)</span>
+                        <span id="statusPH" class="font-semibold text-slate-400">Esperando...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gauge 2: Humedad -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-lg hover:border-slate-700 transition-all">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-400 uppercase">Humedad Suelo</span>
+                    <i class="fa-solid fa-droplet text-cyan-400"></i>
+                </div>
+                <div class="my-3 text-center">
+                    <div class="text-3xl font-extrabold text-slate-100 font-mono" id="valHum">--</div>
+                    <span class="text-xs font-medium text-slate-400">% Humedad Relativa</span>
+                </div>
+                <div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 mb-2 overflow-hidden">
+                        <div id="barHum" class="bg-cyan-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-slate-500">Rango (40 - 80%)</span>
+                        <span id="statusHum" class="font-semibold text-slate-400">Esperando...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gauge 3: CE (Conductividad Eléctrica) -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-lg hover:border-slate-700 transition-all">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-400 uppercase">Conductividad (CE)</span>
+                    <i class="fa-solid fa-bolt text-amber-400"></i>
+                </div>
+                <div class="my-3 text-center">
+                    <div class="text-3xl font-extrabold text-slate-100 font-mono" id="valCE">--</div>
+                    <span class="text-xs font-medium text-slate-400">mS/cm</span>
+                </div>
+                <div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 mb-2 overflow-hidden">
+                        <div id="barCE" class="bg-amber-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-slate-500">Rango (1.0 - 2.5)</span>
+                        <span id="statusCE" class="font-semibold text-slate-400">Esperando...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gauge 4: Temperatura -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-lg hover:border-slate-700 transition-all">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-400 uppercase">Temperatura</span>
+                    <i class="fa-solid fa-temperature-half text-rose-400"></i>
+                </div>
+                <div class="my-3 text-center">
+                    <div class="text-3xl font-extrabold text-slate-100 font-mono" id="valTemp">--</div>
+                    <span class="text-xs font-medium text-slate-400">°C Ambiente / Agua</span>
+                </div>
+                <div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 mb-2 overflow-hidden">
+                        <div id="barTemp" class="bg-rose-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-slate-500">Rango (15 - 30°C)</span>
+                        <span id="statusTemp" class="font-semibold text-slate-400">Esperando...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gauge 5: Nivel de Agua -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col justify-between shadow-lg hover:border-slate-700 transition-all">
+                <div class="flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-400 uppercase">Tanque de Agua</span>
+                    <i class="fa-solid fa-water text-blue-400"></i>
+                </div>
+                <div class="my-3 text-center">
+                    <div class="text-3xl font-extrabold text-slate-100 font-mono" id="valNivel">--</div>
+                    <span class="text-xs font-medium text-slate-400">% Nivel Estanque</span>
+                </div>
+                <div>
+                    <div class="w-full bg-slate-800 rounded-full h-2 mb-2 overflow-hidden">
+                        <div id="barNivel" class="bg-blue-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-slate-500">Mínimo: 20%</span>
+                        <span id="statusNivel" class="font-semibold text-slate-400">Esperando...</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Realtime Chart and Terminal Log Section -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Realtime Dynamic Chart -->
+            <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex flex-col">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-chart-line text-emerald-400"></i> Histórico de Mediciones en Tiempo Real
+                    </h2>
+                    <span class="text-xs text-slate-500 font-mono">Últimas 20 lecturas</span>
+                </div>
+                <div class="relative flex-1 min-h-[280px]">
+                    <canvas id="realtimeChart"></canvas>
+                </div>
+            </div>
+
+            <!-- MQTT Console Inspector -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-xl flex flex-col">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-terminal text-emerald-400"></i> Terminal de Mensajes MQTT
+                    </h2>
+                    <button onclick="clearConsole()" class="text-slate-500 hover:text-slate-300 text-xs">
+                        <i class="fa-solid fa-trash-can"></i> Limpiar
+                    </button>
+                </div>
+                <!-- Console log window -->
+                <div id="consoleLog" class="bg-slate-950 font-mono text-xs p-3 rounded-lg border border-slate-800 flex-1 h-[280px] overflow-y-auto space-y-1 text-slate-400">
+                    <div class="text-slate-600">// Terminal iniciada. Esperando tramas JSON...</div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 border-t border-slate-800 py-3 px-4 text-center text-xs text-slate-500">
+        Dashboard IoT Agrícola &copy; 2026 - Diseñado para Arduino UNO R4 WiFi &amp; MQTT.js sobre WebSockets.
+    </footer>
+
+    <!-- Modal: Arduino Code & Setup Instructions -->
+    <div id="arduinoModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
+
+            <!-- Modal Header -->
+            <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-microchip text-emerald-400 text-xl"></i>
+                    <h3 class="font-bold text-lg text-slate-100">Código C++ para Arduino UNO R4 WiFi</h3>
+                </div>
+                <button onclick="closeArduinoModal()" class="text-slate-400 hover:text-slate-200">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <!-- Modal Content -->
+            <div class="p-6 overflow-y-auto space-y-4 font-sans text-sm text-slate-300">
+                <p>
+                    Para conectar tu placa física <strong>Arduino UNO R4 WiFi</strong> con este dashboard, sube el siguiente sketch preparado con las librerías <code class="text-emerald-400 font-mono">WiFiS3</code>, <code class="text-emerald-400 font-mono">PubSubClient</code> y <code class="text-emerald-400 font-mono">LiquidCrystal_I2C</code>.
+                </p>
+
+                <!-- Instructions Steps -->
+                <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
+                    <div class="font-semibold text-emerald-400 uppercase tracking-wider mb-1">Instrucciones rápidas:</div>
+                    <p>1. Instala las librerías <strong>PubSubClient</strong> y <strong>LiquidCrystal_I2C</strong> en el Gestor de Librerías de tu Arduino IDE.</p>
+                    <p>2. Rellena tus credenciales Wi-Fi (<code class="text-amber-400">WIFI_SSID</code> y <code class="text-amber-400">WIFI_CLAVE</code>) en el sketch.</p>
+                    <p>3. Compila y sube el código a tu Arduino UNO R4 WiFi. Al iniciar, comenzará a transmitir los datos de tus sensores al tópico <code class="text-emerald-400">duoc/siy6122/fertirriego/datos</code>.</p>
+                </div>
+
+                <!-- Code Container -->
+                <div class="relative">
+                    <button onclick="copyArduinoCode()" class="absolute top-3 right-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition-colors">
+                        <i class="fa-regular fa-copy mr-1"></i> Copiar Código
+                    </button>
+                    <pre class="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono text-emerald-300 overflow-x-auto max-h-96"><code id="codeBlock">/*
+  FERTIRRIEGO IoT - Arduino UNO R4 WiFi (Modo Híbrido: Con/Sin WiFi)
+  SIY6122 - Problemáticas Globales y Prototipado
+  4 sensores analógicos -&gt; decisión -&gt; LCD 16x2 I2C (5 s por dato) + MQTT unificado
+*/
+
+#include &lt;WiFiS3.h&gt;
+#include &lt;PubSubClient.h&gt;
+#include &lt;LiquidCrystal_I2C.h&gt;
+
+// ---------- Configuración ----------
+const char* WIFI_SSID  = &quot;TU_WIFI&quot;;
+const char* WIFI_CLAVE = &quot;TU_CLAVE&quot;;
+const char* BROKER     = &quot;broker.hivemq.com&quot;;
+const char* TEMA       = &quot;duoc/siy6122/fertirriego/datos&quot;; // Tópico único con JSON completo
+const char* ID_CLIENTE = &quot;nodo-fertirriego-grupo01&quot;;   // debe ser único
+
+const int   PINES[4]   = {A0, A1, A2, A3};
+const char* NOMBRES[4] = {&quot;temp&quot;, &quot;humedad&quot;, &quot;ph&quot;, &quot;ce&quot;};
+const char* UNID[4]    = {&quot;C&quot;, &quot;%&quot;, &quot;&quot;, &quot;dS/m&quot;};
+
+// ---------- Tiempos (ms) ----------
+const unsigned long T_LECTURA   = 1000;    // leer sensores y refrescar LCD/Serial
+const unsigned long T_PAGINA    = 5000;    // cada dato visible 5 segundos
+const unsigned long T_MQTT      = 3000;    // publicación MQTT
+const unsigned long T_REINT_WIFI = 30000;  // reintento de WiFi
+const unsigned long T_REINT_MQTT = 10000;  // reintento de broker
+
+// ---------- Calibración de Lectura Analógica (0 - 1023) ----------
+const bool PH_CE_REALES = false;  // false: potenciómetros simulan pH y CE
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+WiFiClient red;
+PubSubClient mqtt(red);
+
+float valores[4];
+const char* estados[4];
+
+int pagina = 0;
+unsigned long tLectura = 0, tPagina = 0, tMqtt = 0;
+unsigned long tIntentoWiFi = 0, tIntentoMqtt = 0;
+bool wifiIntentado = false;
+
+// ---------- Captura de datos (Mapeo directo y sin ruido) ----------
+float leer(int i) {
+  int raw = analogRead(PINES[i]);
+  switch (i) {
+    case 0:  return (raw / 1023.0) * 50.0;                    // Temperatura: 0 a 50 °C
+    case 1:  return (raw / 1023.0) * 100.0;                   // Humedad: 0 a 100 %
+    case 2:  return (raw / 1023.0) * 14.0;                    // pH: 0 a 14
+    default: return (raw / 1023.0) * 3.0;                     // CE: 0 a 3.0 mS/cm
+  }
+}
+
+// ---------- Toma de decisiones ----------
+const char* estado(int i, float v) {
+  switch (i) {
+    case 0:  return v &gt;= 35 ? &quot;ALERTA TEMP ALTA&quot; : &quot;Estado: NORMAL&quot;;
+    case 1:  return v &lt; 30 ? &quot;! ESTRES HIDRICO&quot; : v &gt; 80 ? &quot;! EXCESO DE AGUA&quot; : &quot;Humedad OK&quot;;
+    case 2:  return v &lt; 5 ? &quot;! ALCALINIZAR&quot; : v &gt; 7.2 ? &quot;! ACIDIFICAR&quot;
+                  : (v &gt;= 5.5 &amp;&amp; v &lt;= 6.5) ? &quot;RANGO OPTIMO&quot; : &quot;FUERA DE OPTIMO&quot;;
+    default: return v &gt; 3 ? &quot;ALERTA: Salino&quot;
+                  : (v &gt;= 1.5 &amp;&amp; v &lt;= 2.5) ? &quot;Rango: Optimo&quot; : &quot;Fuera de Optimo&quot;;
+  }
+}
+
+// ---------- LCD sin parpadeo ----------
+String ajustar(String s, int largo) {
+  while ((int)s.length() &lt; largo) s += &#x27; &#x27;;
+  return s.substring(0, largo);
+}
+
+void dibujarLCD() {
+  int i = pagina;
+  String l0 = String(NOMBRES[i]) + &quot;: &quot; + String(valores[i], 1) + UNID[i];
+  lcd.setCursor(0, 0);
+  lcd.print(ajustar(l0, 15));
+  lcd.print(mqtt.connected() ? &#x27;*&#x27; : &#x27;-&#x27;);     // * = MQTT activo | - = sin red/MQTT
+  lcd.setCursor(0, 1);
+  lcd.print(ajustar(estados[i], 16));
+}
+
+// ---------- Red no bloqueante ----------
+void gestionarRed() {
+  if (WiFi.status() != WL_CONNECTED) {
+    if (!wifiIntentado || millis() - tIntentoWiFi &gt; T_REINT_WIFI) {
+      tIntentoWiFi = millis();
+      wifiIntentado = true;
+      WiFi.begin(WIFI_SSID, WIFI_CLAVE);
+    }
+    return;
+  }
+  if (!mqtt.connected()) {
+    if (millis() - tIntentoMqtt &gt; T_REINT_MQTT) {
+      tIntentoMqtt = millis();
+      mqtt.connect(ID_CLIENTE);
+    }
+  } else {
+    mqtt.loop();
+  }
+}
+
+// ---------- Publicación MQTT unificada y sin errores de sintaxis ----------
+void publicarMQTT() {
+  if (!mqtt.connected()) return;
+
+  // Construcción segura del paquete JSON para el dashboard
+  String msg = &quot;{&quot;;
+  msg += &quot;\&quot;temp\&quot;:&quot;;
+  msg += String(valores[0], 2);
+  msg += &quot;,\&quot;humedad\&quot;:&quot;;
+  msg += String(valores[1], 2);
+  msg += &quot;,\&quot;pH\&quot;:&quot;;
+  msg += String(valores[2], 2);
+  msg += &quot;,\&quot;CE\&quot;:&quot;;
+  msg += String(valores[3], 2);
+  msg += &quot;,\&quot;nivelAgua\&quot;:80&quot;;
+  msg += &quot;}&quot;;
+
+  mqtt.publish(TEMA, msg.c_str());
+}
+
+void setup() {
+  Serial.begin(115200);
+  lcd.init();
+  lcd.backlight();
+  lcd.print(&quot;Fertirriego IoT&quot;);
+  lcd.setCursor(0, 1);
+  lcd.print(&quot;Modo Hibrido&quot;);
+
+  mqtt.setServer(BROKER, 1883);
+
+  // Primera lectura inicial
+  for (int i = 0; i &lt; 4; i++) { valores[i] = leer(i); estados[i] = estado(i, valores[i]); }
+  delay(1500);
+  tLectura = tPagina = tMqtt = millis();
+  dibujarLCD();
+}
+
+void loop() {
+  gestionarRed();
+  unsigned long ahora = millis();
+
+  // 1) Lectura de sensores cada 1 s
+  if (ahora - tLectura &gt;= T_LECTURA) {
+    tLectura = ahora;
+    for (int i = 0; i &lt; 4; i++) {
+      valores[i] = leer(i);
+      estados[i] = estado(i, valores[i]);
+      Serial.print(NOMBRES[i]); Serial.print(&quot;: &quot;); Serial.print(valores[i], 2);
+      Serial.print(UNID[i]);    Serial.print(&quot; | &quot;); Serial.println(estados[i]);
+    }
+    Serial.println(&quot;---&quot;);
+    dibujarLCD();
+  }
+
+  // 2) Cambio de página en pantalla LCD cada 5 s
+  if (ahora - tPagina &gt;= T_PAGINA) {
+    tPagina = ahora;
+    pagina = (pagina + 1) % 4;
+    dibujarLCD();
+  }
+
+  // 3) MQTT cada 3 s
+  if (ahora - tMqtt &gt;= T_MQTT) {
+    tMqtt = ahora;
+    if (mqtt.connected()) publicarMQTT();
+  }
+}</code></pre>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="p-4 border-t border-slate-800 flex justify-end">
+                <button onclick="closeArduinoModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-lg text-xs font-semibold">
+                    Cerrar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Application Script Engine -->
+    <script>
+        // --- GLOBAL STATE & CONFIGURATION ---
+        const state = {
+            ph: 7.0,
+            humedad: 60,
+            ce: 1.5,
+            temp: 23.0,
+            nivelAgua: 80,
+            simulationMode: false,
+            mqttConnected: false,
+            packetCount: 0
+        };
+
+        let mqttClient = null;
+        let simInterval = null;
+        let chartInstance = null;
+
+        const MQTT_TOPIC = "duoc/siy6122/fertirriego/#";
+
+        // --- CHART INITIALIZATION ---
+        function initChart() {
+            const ctx = document.getElementById('realtimeChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'pH',
+                            borderColor: '#a855f7',
+                            backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                            data: [],
+                            borderWidth: 2,
+                            tension: 0,
+                            yAxisID: 'yPH'
+                        },
+                        {
+                            label: 'Humedad (%)',
+                            borderColor: '#06b6d4',
+                            backgroundColor: 'rgba(6, 182, 212, 0.1)',
+                            data: [],
+                            borderWidth: 2,
+                            tension: 0,
+                            yAxisID: 'y100'
+                        },
+                        {
+                            label: 'Temp (°C)',
+                            borderColor: '#f43f5e',
+                            backgroundColor: 'rgba(244, 63, 94, 0.1)',
+                            data: [],
+                            borderWidth: 2,
+                            tension: 0,
+                            yAxisID: 'yTemp'
+                        },
+                        {
+                            label: 'Conductividad (mS/cm)',
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                            data: [],
+                            borderWidth: 2,
+                            tension: 0,
+                            yAxisID: 'yCE'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 400 },
+                    scales: {
+                        x: {
+                            grid: { color: '#1e293b' },
+                            ticks: { color: '#64748b', font: { size: 10 } }
+                        },
+                        yPH: {
+                            type: 'linear',
+                            position: 'left',
+                            min: 0,
+                            max: 14,
+                            grid: { color: '#1e293b' },
+                            ticks: { color: '#a855f7', font: { size: 10 } }
+                        },
+                        y100: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 100,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#06b6d4', font: { size: 10 } }
+                        },
+                        yTemp: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 50,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#f43f5e', font: { size: 10 } }
+                        },
+                        yCE: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 3,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#f59e0b', font: { size: 10 } }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8', font: { size: 11 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        // --- MQTT ENGINE & CONNECTION ---
+        function connectMQTT() {
+            const brokerUrl = document.getElementById('brokerSelect').value;
+            updateStatusBadge("Conectando...", "amber");
+            logConsole("system", `Iniciando conexión WebSocket a: ${brokerUrl}`);
+
+            // Update broker label
+            const urlObj = new URL(brokerUrl);
+            document.getElementById('currentBrokerName').innerText = urlObj.hostname;
+
+            if (mqttClient) {
+                mqttClient.end();
+            }
+
+            // Connect using MQTT.js over WebSocket
+            mqttClient = mqtt.connect(brokerUrl, {
+                clientId: 'agri_dash_' + Math.random().toString(16).substr(2, 8),
+                clean: true,
+                connectTimeout: 5000,
+                reconnectPeriod: 3000
+            });
+
+            mqttClient.on('connect', () => {
+                state.mqttConnected = true;
+                updateStatusBadge("MQTT En Vivo", "emerald");
+                logConsole("system", "¡Conexión establecida con éxito al Broker!");
+
+                // Subscribe automatically
+                mqttClient.subscribe(MQTT_TOPIC, (err) => {
+                    if (!err) {
+                        logConsole("system", `Suscrito al tópico: ${MQTT_TOPIC}`);
+                    } else {
+                        logConsole("error", `Error al suscribirse: ${err}`);
+                    }
+                });
+            });
+
+            mqttClient.on('message', (topic, payload) => {
+                try {
+                    const rawStr = payload.toString();
+                    logConsole("mqtt", `[${topic}] ${rawStr}`);
+
+                    const data = JSON.parse(rawStr);
+
+                    // Si el mensaje viene de un sub-tópico específico (ej: .../temp, .../humedad, etc.)
+                    const subTopic = topic.split('/').pop();
+                    let updateObj = {};
+
+                    if (subTopic === "temp") updateObj.temp = data.valor;
+                    else if (subTopic === "humedad") updateObj.humedad = data.valor;
+                    else if (subTopic === "ph") updateObj.pH = data.valor;
+                    else if (subTopic === "ce") updateObj.CE = data.valor;
+                    else updateObj = data; // Si viene como paquete completo
+
+                    processIncomingData(updateObj);
+                } catch (e) {
+                    logConsole("error", `Incapaz de procesar paquete JSON: ${e.message}`);
+                }
+            });
+
+            mqttClient.on('reconnect', () => {
+                updateStatusBadge("Reconectando...", "amber");
+                logConsole("system", "Reintentando conexión MQTT...");
+            });
+
+            mqttClient.on('offline', () => {
+                state.mqttConnected = false;
+                updateStatusBadge("Desconectado", "rose");
+            });
+
+            mqttClient.on('error', (err) => {
+                logConsole("error", `Error MQTT: ${err.message}`);
+            });
+        }
+
+        function changeBroker() {
+            connectMQTT();
+        }
+
+        // --- DATA PROCESSING & UI UPDATE ---
+        function processIncomingData(data) {
+            state.packetCount++;
+            document.getElementById('packetsReceived').innerText = state.packetCount;
+
+            // Extract values safely (acepta pH/pH, CE/ce, etc.)
+            const phVal = data.pH !== undefined ? data.pH : data.ph;
+            const ceVal = data.CE !== undefined ? data.CE : data.ce;
+            if (phVal !== undefined) state.ph = parseFloat(phVal);
+            if (data.humedad !== undefined) state.humedad = parseFloat(data.humedad);
+            if (ceVal !== undefined) state.ce = parseFloat(ceVal);
+            if (data.temp !== undefined) state.temp = parseFloat(data.temp);
+            if (data.nivelAgua !== undefined) state.nivelAgua = parseInt(data.nivelAgua);
+
+            // Update time
+            const now = new Date().toLocaleTimeString();
+            document.getElementById('lastMsgTime').innerText = `Recibido: ${now}`;
+
+            // Refresh UI
+            updateGauges();
+            updateLCD();
+            checkThresholds();
+            pushChartData(now);
+        }
+
+        function updateGauges() {
+            // pH Gauge
+            document.getElementById('valPH').innerText = state.ph.toFixed(1);
+            const phBarPct = Math.min(100, Math.max(0, (state.ph / 14) * 100));
+            document.getElementById('barPH').style.width = `${phBarPct}%`;
+            document.getElementById('statusPH').innerText = (state.ph >= 5.5 && state.ph <= 7.5) ? "Óptimo" : "Alerta";
+            document.getElementById('statusPH').className = (state.ph >= 5.5 && state.ph <= 7.5) ? "font-semibold text-emerald-400" : "font-semibold text-rose-400";
+
+            // Humedad Gauge
+            document.getElementById('valHum').innerText = state.humedad.toFixed(1);
+            document.getElementById('barHum').style.width = `${state.humedad}%`;
+            document.getElementById('statusHum').innerText = (state.humedad >= 40 && state.humedad <= 80) ? "Adecuado" : "Anormal";
+            document.getElementById('statusHum').className = (state.humedad >= 40 && state.humedad <= 80) ? "font-semibold text-emerald-400" : "font-semibold text-rose-400";
+
+            // CE Gauge
+            document.getElementById('valCE').innerText = state.ce.toFixed(2);
+            const cePct = Math.min(100, (state.ce / 3.0) * 100);
+            document.getElementById('barCE').style.width = `${cePct}%`;
+            document.getElementById('statusCE').innerText = (state.ce >= 1.0 && state.ce <= 2.5) ? "Correcto" : "Fuera de Rango";
+            document.getElementById('statusCE').className = (state.ce >= 1.0 && state.ce <= 2.5) ? "font-semibold text-emerald-400" : "font-semibold text-rose-400";
+
+            // Temp Gauge
+            document.getElementById('valTemp').innerText = state.temp.toFixed(1);
+            const tempPct = Math.min(100, (state.temp / 50) * 100);
+            document.getElementById('barTemp').style.width = `${tempPct}%`;
+            document.getElementById('statusTemp').innerText = (state.temp >= 15 && state.temp <= 30) ? "Ideal" : "Crítico";
+            document.getElementById('statusTemp').className = (state.temp >= 15 && state.temp <= 30) ? "font-semibold text-emerald-400" : "font-semibold text-rose-400";
+
+            // Nivel Agua Gauge
+            document.getElementById('valNivel').innerText = state.nivelAgua;
+            document.getElementById('barNivel').style.width = `${state.nivelAgua}%`;
+            document.getElementById('statusNivel').innerText = (state.nivelAgua >= 20) ? "Normal" : "Bajo Nivel";
+            document.getElementById('statusNivel').className = (state.nivelAgua >= 20) ? "font-semibold text-emerald-400" : "font-semibold text-rose-400";
+        }
+
+        function updateLCD() {
+            // Emulate 16x2 character lines
+            const line1 = `pH:${state.ph.toFixed(1).padStart(4, ' ')} H:${Math.round(state.humedad).toString().padStart(3, ' ')}% `;
+            let line2 = "Estado: OK      ";
+
+            if (state.ph < 5.5 || state.ph > 7.5) line2 = "ALERTA: pH Anorm";
+            else if (state.nivelAgua < 20) line2 = "ALERTA: AGUA BAJ";
+            else if (state.temp > 30) line2 = "ALERTA: TEMP ALT";
+
+            document.getElementById('lcdLine1').innerText = line1.substring(0, 16);
+            document.getElementById('lcdLine2').innerText = line2.substring(0, 16);
+        }
+
+        function checkThresholds() {
+            let alerts = [];
+
+            if (state.ph < 5.5 || state.ph > 7.5) alerts.push(`pH fuera de rango (${state.ph})`);
+            if (state.nivelAgua < 20) alerts.push(`Nivel de agua crítico (${state.nivelAgua}%)`);
+            if (state.temp > 32) alerts.push(`Temperatura elevada (${state.temp}°C)`);
+
+            const alertBanner = document.getElementById('alertBanner');
+            const alertMessage = document.getElementById('alertMessage');
+            const healthBadge = document.getElementById('healthBadge');
+
+            if (alerts.length > 0) {
+                alertBanner.classList.remove('hidden');
+                alertMessage.innerText = `¡ALERTA CRÍTICA!: ${alerts.join(' | ')}`;
+                healthBadge.className = "text-xs px-2.5 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 font-semibold animate-pulse";
+                healthBadge.innerText = "ALERTA CRÍTICA";
+            } else {
+                alertBanner.classList.add('hidden');
+                healthBadge.className = "text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-semibold";
+                healthBadge.innerText = "ÓPTIMO";
+            }
+        }
+
+        function pushChartData(timeLabel) {
+            if (!chartInstance) return;
+
+            const labels = chartInstance.data.labels;
+            labels.push(timeLabel);
+
+            chartInstance.data.datasets[0].data.push(state.ph);
+            chartInstance.data.datasets[1].data.push(state.humedad);
+            chartInstance.data.datasets[2].data.push(state.temp);
+            chartInstance.data.datasets[3].data.push(state.ce);
+
+            // Keep only last 20 readings
+            if (labels.length > 20) {
+                labels.shift();
+                chartInstance.data.datasets.forEach(ds => ds.data.shift());
+            }
+
+            chartInstance.update();
+        }
+
+        // --- SIMULATION FALLBACK ---
+        function toggleSimulation() {
+            state.simulationMode = !state.simulationMode;
+            const simStatus = document.getElementById('simStatus');
+
+            if (state.simulationMode) {
+                simStatus.innerText = "ON";
+                simStatus.className = "text-emerald-400 font-bold";
+                logConsole("system", "Modo Prueba/Simulación Local activado.");
+
+                simInterval = setInterval(() => {
+                    // Generate subtle realistic fluctuations
+                    const mockData = {
+                        pH: Math.max(4.0, Math.min(9.0, state.ph + (Math.random() * 0.4 - 0.2))),
+                        humedad: Math.max(20, Math.min(95, state.humedad + (Math.random() * 2 - 1))),
+                        CE: Math.max(0.5, Math.min(3.0, state.ce + (Math.random() * 0.04 - 0.02))),
+                        temp: Math.max(10, Math.min(40, state.temp + (Math.random() * 0.6 - 0.3))),
+                        nivelAgua: Math.max(10, Math.min(100, state.nivelAgua + (Math.random() > 0.8 ? -1 : 0)))
+                    };
+                    processIncomingData(mockData);
+                }, 2500);
+            } else {
+                simStatus.innerText = "OFF";
+                simStatus.className = "text-rose-400";
+                clearInterval(simInterval);
+                logConsole("system", "Modo Prueba desactivado. Esperando datos físicos de la placa.");
+            }
+        }
+
+        // --- CONSOLE & UI HELPERS ---
+        function updateStatusBadge(text, color) {
+            const badge = document.getElementById('statusBadge');
+            const statusText = document.getElementById('statusText');
+
+            statusText.innerText = text;
+            if (color === "emerald") {
+                badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-semibold";
+            } else if (color === "amber") {
+                badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-semibold";
+            } else {
+                badge.className = "flex items-center space-x-2 px-3 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold";
+            }
+        }
+
+        function logConsole(type, msg) {
+            const consoleBox = document.getElementById('consoleLog');
+            const entry = document.createElement('div');
+            const time = new Date().toLocaleTimeString();
+
+            if (type === "mqtt") {
+                entry.className = "text-emerald-400";
+                entry.innerText = `[${time}] RX -> ${msg}`;
+            } else if (type === "error") {
+                entry.className = "text-rose-400";
+                entry.innerText = `[${time}] ERR -> ${msg}`;
+            } else {
+                entry.className = "text-slate-400";
+                entry.innerText = `[${time}] SYS -> ${msg}`;
+            }
+
+            consoleBox.appendChild(entry);
+
+            // Mantener un máximo de 10 mensajes en pantalla
+            while (consoleBox.children.length > 10) {
+                consoleBox.removeChild(consoleBox.firstChild);
+            }
+
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('consoleLog').innerHTML = '<div class="text-slate-600">// Terminal limpiada.</div>';
+        }
+
+        function dismissAlert() {
+            document.getElementById('alertBanner').classList.add('hidden');
+        }
+
+        // --- MODAL CONTROLS ---
+        function openArduinoModal() {
+            document.getElementById('arduinoModal').classList.remove('hidden');
+        }
+
+        function closeArduinoModal() {
+            document.getElementById('arduinoModal').classList.add('hidden');
+        }
+
+        function copyArduinoCode() {
+            const code = document.getElementById('codeBlock').innerText;
+            const textarea = document.createElement('textarea');
+            textarea.value = code;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            alert('¡Código Arduino copiado al portapapeles!');
+        }
+
+        // Initialize application on page load
+        window.onload = () => {
+            initChart();
+            updateGauges();
+            updateLCD();
+            connectMQTT();
+        };
+    </script>
+</body>
+</html>
