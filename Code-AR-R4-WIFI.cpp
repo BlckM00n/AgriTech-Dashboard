@@ -1,14 +1,3 @@
-/*
-  FERTIRRIEGO IoT - Arduino UNO R4 WiFi (Modo Híbrido: Con/Sin WiFi)
-  SIY6122 - Proyecto Completo e Integrado:
-  - Temp y Humedad Aire (DHT22 en D2)
-  - Humedad Suelo (Analógico A0)
-  - pH (Analógico A1)
-  - CE (Analógico A2)
-  - Semáforo LED (Verde D3, Amarillo D4, Rojo D5)
-  - LCD 16x2 I2C + Conectividad MQTT
-*/
-
 #include <WiFiS3.h>
 #include <PubSubClient.h>
 #include <LiquidCrystal_I2C.h>
